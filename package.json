@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "ingest": "tsx scripts/ingest-jsonl.ts"
+    "ingest": "tsx scripts/ingest-jsonl.ts",
+    "ingest:dry": "tsx scripts/ingest-dry.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.99.2",
