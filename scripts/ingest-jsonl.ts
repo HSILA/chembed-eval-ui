@@ -4,8 +4,12 @@
  * Ingest JSONL review items into Supabase.
  *
  * Usage:
- *   npx tsx scripts/ingest-jsonl.ts --task training --file /abs/path/to/training.jsonl
- *   npx tsx scripts/ingest-jsonl.ts --task evaluation --file /abs/path/to/eval.jsonl
+ *   npm run ingest -- --task training
+ *   npm run ingest -- --task evaluation
+ *
+ * Optional:
+ *   npm run ingest -- --task training --file /abs/path/to/training_samples.jsonl
+ *   npm run ingest -- --task evaluation --file /abs/path/to/evaluation_samples.jsonl
  *
  * Env (local only):
  *   NEXT_PUBLIC_SUPABASE_URL
@@ -30,8 +34,10 @@ function must(v: string | undefined, msg: string): string {
 
 async function main() {
   const task = must(arg('--task') as TaskType | undefined, 'Missing --task (training|evaluation)') as TaskType
-  const file = must(arg('--file'), 'Missing --file <path.jsonl>')
   const batchSize = Number(arg('--batch') ?? '200')
+
+  const defaultFile = task === 'training' ? 'data/training_samples.jsonl' : 'data/evaluation_samples.jsonl'
+  const file = arg('--file') ?? defaultFile
 
   const url = must(process.env.NEXT_PUBLIC_SUPABASE_URL, 'Missing NEXT_PUBLIC_SUPABASE_URL')
   const serviceKey = must(process.env.SUPABASE_SERVICE_ROLE_KEY, 'Missing SUPABASE_SERVICE_ROLE_KEY (use local-only ingestion)')
