@@ -16,7 +16,11 @@
  *   SUPABASE_SERVICE_ROLE_KEY   (recommended for ingestion)
  */
 
-import 'dotenv/config'
+import dotenv from 'dotenv'
+
+// Next.js loads `.env.local`, but plain dotenv/config does not by default.
+// For local ingestion we explicitly load it.
+dotenv.config({ path: '.env.local' })
 
 import fs from 'node:fs'
 import readline from 'node:readline'
