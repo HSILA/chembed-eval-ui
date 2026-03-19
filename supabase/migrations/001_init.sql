@@ -57,14 +57,14 @@ alter table public.reviews enable row level security;
 -- Policies (tight, safe defaults)
 -- profiles
 -- - Anyone logged in can see profiles (needed to show role badges later).
-create policy if not exists "profiles_select_authenticated"
+create policy "profiles_select_authenticated"
 on public.profiles
 for select
 to authenticated
 using (true);
 
 -- review_items: any authenticated user can read
-create policy if not exists "review_items_select_authenticated"
+create policy "review_items_select_authenticated"
 on public.review_items
 for select
 to authenticated
@@ -73,13 +73,13 @@ using (true);
 -- reviews:
 -- - Any authenticated user can READ all reviews ("public")
 -- - Only users with profiles.can_review=true can WRITE reviews
-create policy if not exists "reviews_select_authenticated"
+create policy "reviews_select_authenticated"
 on public.reviews
 for select
 to authenticated
 using (true);
 
-create policy if not exists "reviews_insert_if_can_review"
+create policy "reviews_insert_if_can_review"
 on public.reviews
 for insert
 to authenticated
@@ -91,7 +91,7 @@ with check (
   )
 );
 
-create policy if not exists "reviews_update_if_can_review"
+create policy "reviews_update_if_can_review"
 on public.reviews
 for update
 to authenticated
@@ -110,7 +110,7 @@ with check (
   )
 );
 
-create policy if not exists "reviews_delete_if_can_review"
+create policy "reviews_delete_if_can_review"
 on public.reviews
 for delete
 to authenticated
