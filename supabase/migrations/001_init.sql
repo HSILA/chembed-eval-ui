@@ -21,7 +21,6 @@ create table if not exists public.review_items (
 create table if not exists public.profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   can_review boolean not null default false,
-  is_admin boolean not null default false,
   created_at timestamptz not null default now()
 );
 
