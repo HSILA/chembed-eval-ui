@@ -95,6 +95,17 @@ function hasAnyFeedback(payload: ReturnType<typeof toSavePayload>) {
   return Object.values(payload).some((value) => value !== null)
 }
 
+function isCompleteForTask(draft: ReviewDraft, isTraining: boolean) {
+  const commonReady =
+    draft.answerability !== null &&
+    draft.query_quality !== null &&
+    draft.standalone_clarity !== null
+
+  if (!commonReady) return false
+  if (isTraining) return draft.scientific_validity !== null
+  return draft.top10_relevance !== null && draft.near_miss !== null
+}
+
 function draftFromReview(review?: ReviewRow): ReviewDraft {
   if (!review) return EMPTY_DRAFT
 
@@ -319,70 +330,63 @@ export default function ReviewPage() {
       }
       setReviewsByItem(byItem)
 
-      const first = rows[0]
-      const firstReview = byItem[first.id]
-      setDraft(draftFromReview(firstReview))
+      const firstIncompleteIndex = rows.findIndex((item) => {
+        const existing = byItem[item.id]
+        const d = draftFromReview(existing)
+        const isTraining = item.task_type === 'training'
+        return !isCompleteForTask(d, isTraining)
+      })
+
+      const initialIndex = firstIncompleteIndex >= 0 ? firstIncompleteIndex : 0
+      const initialItem = rows[initialIndex]
+      setIndex(initialIndex)
+      setDraft(draftFromReview(byItem[initialItem.id]))
       setLoadingBucket(false)
     }
 
     loadBucket()
   }, [user, currentBucket])
 
-  useEffect(() => {
+  async function persistDraft() {
     if (!user || !canReview || !currentItem) return
 
-    const timer = setTimeout(async () => {
-      setSaveError(null)
-      const isTraining = currentBucket.task_type === 'training'
-      let existing: ReviewRow | undefined = reviewsByItem[currentItem.id]
+    setSaveError(null)
+    const isTraining = currentBucket.task_type === 'training'
+    let existing: ReviewRow | undefined = reviewsByItem[currentItem.id]
 
-      if (!existing) {
-        const { data: existingRow, error: existingError } = await supabase
-          .from('reviews')
-          .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
-          .eq('item_id', currentItem.id)
-          .eq('reviewer_id', user.id)
-          .maybeSingle()
+    if (!existing) {
+      const { data: existingRow, error: existingError } = await supabase
+        .from('reviews')
+        .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
+        .eq('item_id', currentItem.id)
+        .eq('reviewer_id', user.id)
+        .maybeSingle()
 
-        if (existingError && existingError.code !== 'PGRST116') {
-          setSaveError(existingError.message)
-          return
-        }
-
-        existing = (existingRow as ReviewRow | null) ?? undefined
-      }
-
-      const payload = toSavePayload(draft, isTraining, existing)
-
-      if (!existing && !hasAnyFeedback(payload)) {
+      if (existingError && existingError.code !== 'PGRST116') {
+        setSaveError(existingError.message)
         return
       }
 
-      if (existing) {
-        const { data, error } = await supabase
-          .from('reviews')
-          .update(payload)
-          .eq('id', existing.id)
-          .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
-          .single()
+      existing = (existingRow as ReviewRow | null) ?? undefined
+    }
 
-        if (error) {
-          setSaveError(error.message)
-          return
-        }
+    const payload = toSavePayload(draft, isTraining, existing)
 
-        setReviewsByItem((prev) => ({ ...prev, [currentItem.id]: data as ReviewRow }))
-        setSaveTick((v) => v + 1)
-        return
-      }
+    // Keep note optional, but save only when mandatory fields are complete.
+    // This prevents partial rows and ensures revisit starts at first incomplete item.
+    if (!isCompleteForTask(draft, isTraining)) {
+      return
+    }
 
+    if (!existing && !hasAnyFeedback(payload)) {
+      return
+    }
+
+    if (existing) {
       const { data, error } = await supabase
         .from('reviews')
-        .insert({
-          item_id: currentItem.id,
-          reviewer_id: user.id,
-          ...payload,
-        })
+        .update(payload)
+        .eq('id', existing.id)
         .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
         .single()
 
@@ -393,6 +397,33 @@ export default function ReviewPage() {
 
       setReviewsByItem((prev) => ({ ...prev, [currentItem.id]: data as ReviewRow }))
       setSaveTick((v) => v + 1)
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('reviews')
+      .insert({
+        item_id: currentItem.id,
+        reviewer_id: user.id,
+        ...payload,
+      })
+      .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
+      .single()
+
+    if (error) {
+      setSaveError(error.message)
+      return
+    }
+
+    setReviewsByItem((prev) => ({ ...prev, [currentItem.id]: data as ReviewRow }))
+    setSaveTick((v) => v + 1)
+  }
+
+  useEffect(() => {
+    if (!user || !canReview || !currentItem) return
+
+    const timer = setTimeout(() => {
+      persistDraft()
     }, 450)
 
     return () => clearTimeout(timer)
@@ -450,7 +481,7 @@ export default function ReviewPage() {
         <div className="space-y-1">
           <h1 className="text-lg font-semibold">ChEmbed Review</h1>
           <p className="text-xs text-neutral-600 break-all">{user.email}</p>
-          <button className="text-xs underline" onClick={signOut}>Logout</button>
+          <button className="cursor-pointer text-xs underline" onClick={signOut}>Logout</button>
         </div>
 
         <div>
@@ -491,7 +522,7 @@ export default function ReviewPage() {
 
         <button
           onClick={onExportCsv}
-          className="mt-auto rounded border px-3 py-2 text-sm hover:bg-neutral-100"
+          className="cursor-pointer mt-auto rounded border px-3 py-2 text-sm hover:bg-neutral-100"
           disabled={!items.length}
         >
           Export current bucket CSV
@@ -519,14 +550,21 @@ export default function ReviewPage() {
               <div>{currentBucket.title} • Item {index + 1} / {items.length}</div>
               <div className="flex gap-2">
                 <button
-                  className="rounded border px-3 py-1 disabled:opacity-50"
+                  className="cursor-pointer rounded border border-blue-600 bg-blue-600 px-3 py-1 text-white hover:bg-blue-500 disabled:opacity-50"
+                  disabled={!canReview}
+                  onClick={persistDraft}
+                >
+                  Save
+                </button>
+                <button
+                  className="cursor-pointer rounded border px-3 py-1 disabled:opacity-50"
                   disabled={index === 0}
                   onClick={() => goToIndex(Math.max(0, index - 1))}
                 >
                   Previous
                 </button>
                 <button
-                  className="rounded border px-3 py-1 disabled:opacity-50"
+                  className="cursor-pointer rounded border px-3 py-1 disabled:opacity-50"
                   disabled={index >= items.length - 1}
                   onClick={() => goToIndex(Math.min(items.length - 1, index + 1))}
                 >
@@ -574,12 +612,12 @@ export default function ReviewPage() {
 
                           return (
                             <li key={key}>
-                              <p className="font-medium">Rank {r.rank} • {r.doc_id}</p>
+                              <p className="font-medium text-blue-300">Rank {r.rank} • {r.doc_id}</p>
                               <p className="text-neutral-700 whitespace-pre-wrap">{shownText}</p>
                               {needsToggle && (
                                 <button
                                   type="button"
-                                  className="mt-1 text-xs underline"
+                                  className="cursor-pointer mt-1 text-xs underline"
                                   onClick={() => setExpandedRetrieved((prev) => ({ ...prev, [key]: !expanded }))}
                                 >
                                   {expanded ? 'Show less' : 'Read more'}
@@ -601,14 +639,14 @@ export default function ReviewPage() {
                   <div>
                     <div className="text-sm font-medium">Answerability</div>
                     <div className="mt-1 flex gap-4 text-sm">
-                      <label className="flex items-center gap-2">
+                      <label className="cursor-pointer flex items-center gap-2">
                         <input
                           type="radio"
                           checked={draft.answerability === true}
                           onChange={() => setDraftField('answerability', true)}
                         /> Yes
                       </label>
-                      <label className="flex items-center gap-2">
+                      <label className="cursor-pointer flex items-center gap-2">
                         <input
                           type="radio"
                           checked={draft.answerability === false}
@@ -622,7 +660,7 @@ export default function ReviewPage() {
                     <div className="text-sm font-medium">Query quality (1-5)</div>
                     <div className="mt-1 flex gap-3 text-sm">
                       {[1, 2, 3, 4, 5].map((v) => (
-                        <label key={v} className="flex items-center gap-1">
+                        <label key={v} className="cursor-pointer flex items-center gap-1">
                           <input
                             type="radio"
                             value={v}
@@ -639,7 +677,7 @@ export default function ReviewPage() {
                     <div className="text-sm font-medium">Standalone clarity (1-5)</div>
                     <div className="mt-1 flex gap-3 text-sm">
                       {[1, 2, 3, 4, 5].map((v) => (
-                        <label key={v} className="flex items-center gap-1">
+                        <label key={v} className="cursor-pointer flex items-center gap-1">
                           <input
                             type="radio"
                             value={v}
@@ -657,7 +695,7 @@ export default function ReviewPage() {
                       <div className="text-sm font-medium">Scientific validity (1-5)</div>
                       <div className="mt-1 flex gap-3 text-sm">
                         {[1, 2, 3, 4, 5].map((v) => (
-                          <label key={v} className="flex items-center gap-1">
+                          <label key={v} className="cursor-pointer flex items-center gap-1">
                             <input
                               type="radio"
                               value={v}
@@ -675,7 +713,7 @@ export default function ReviewPage() {
                         <div className="text-sm font-medium">Top-10 relevance overall (1-5)</div>
                         <div className="mt-1 flex gap-3 text-sm">
                           {[1, 2, 3, 4, 5].map((v) => (
-                            <label key={v} className="flex items-center gap-1">
+                            <label key={v} className="cursor-pointer flex items-center gap-1">
                               <input
                                 type="radio"
                                 value={v}
@@ -691,14 +729,14 @@ export default function ReviewPage() {
                       <div>
                         <div className="text-sm font-medium">Near-miss in top-10?</div>
                         <div className="mt-1 flex gap-4 text-sm">
-                          <label className="flex items-center gap-2">
+                          <label className="cursor-pointer flex items-center gap-2">
                             <input
                               type="radio"
                               checked={draft.near_miss === true}
                               onChange={() => setDraftField('near_miss', true)}
                             /> Yes
                           </label>
-                          <label className="flex items-center gap-2">
+                          <label className="cursor-pointer flex items-center gap-2">
                             <input
                               type="radio"
                               checked={draft.near_miss === false}

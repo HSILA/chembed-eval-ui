@@ -45,7 +45,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md space-y-5 rounded-lg border border-slate-700 bg-slate-900 p-6 shadow-sm">
         <div>
           <h1 className="text-2xl font-semibold text-white">ChEmbed Expert Review</h1>
-          <p className="mt-1 text-sm text-slate-300">Sign in with your Supabase account.</p>
+          <p className="mt-1 text-sm text-slate-300">Login with your username.</p>
         </div>
 
         <form className="space-y-4" onSubmit={onSubmit}>
@@ -76,14 +76,14 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded bg-slate-100 px-4 py-2 font-medium text-slate-950 disabled:opacity-60"
+            className="cursor-pointer w-full rounded bg-slate-100 px-4 py-2 font-medium text-slate-950 disabled:opacity-60"
           >
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
 
         <p className="text-xs text-slate-300">
-          Need the reviewer app? <Link className="underline" href="/review">Go to review</Link>
+          Need the reviewer app? <Link className="cursor-pointer underline" href="/review">Go to review</Link>
         </p>
       </div>
     </main>
