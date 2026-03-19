@@ -1,42 +1,659 @@
+'use client'
+
+import { ChangeEvent, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { User } from '@supabase/supabase-js'
+import { supabase } from '@/lib/supabaseClient'
+
+type TaskType = 'training' | 'evaluation'
+type BucketKey = 'chemrxiv' | 'dolma' | 'successful' | 'unsuccessful'
+
+type RetrievedEntry = {
+  rank?: number
+  score?: number
+  doc_id?: string
+  text?: string
+}
+
+type ItemPayload = {
+  query?: string
+  passage?: string
+  query_text?: string
+  ground_truth_text?: string
+  retrieved?: RetrievedEntry[]
+}
+
+type ReviewItem = {
+  id: string
+  task_type: TaskType
+  subtask: string
+  payload: ItemPayload
+  order_index: number
+}
+
+type ReviewRow = {
+  id: string
+  item_id: string
+  answerability: boolean | null
+  query_quality: number | null
+  standalone_clarity: number | null
+  note: string | null
+  scientific_validity: number | null
+  top10_relevance: number | null
+  near_miss: boolean | null
+}
+
+type ReviewDraft = Omit<ReviewRow, 'id' | 'item_id'>
+
+type BucketConfig = {
+  key: BucketKey
+  title: string
+  task_type: TaskType
+  subtask: string
+}
+
+type ProgressMap = Record<BucketKey, { completed: number; total: number }>
+
+const BUCKETS: BucketConfig[] = [
+  { key: 'chemrxiv', title: 'chemrxiv', task_type: 'training', subtask: 'BASF-AI/ChemRxiv-Train-CC-BY' },
+  { key: 'dolma', title: 'dolma', task_type: 'training', subtask: 'BASF-AI/dolma-chem-only-query-generated' },
+  { key: 'successful', title: 'Successful', task_type: 'evaluation', subtask: 'successful' },
+  { key: 'unsuccessful', title: 'Unsuccessful', task_type: 'evaluation', subtask: 'unsuccessful' },
+]
+
+const EMPTY_DRAFT: ReviewDraft = {
+  answerability: null,
+  query_quality: null,
+  standalone_clarity: null,
+  note: '',
+  scientific_validity: null,
+  top10_relevance: null,
+  near_miss: null,
+}
+
+function draftFromReview(review?: ReviewRow): ReviewDraft {
+  if (!review) return EMPTY_DRAFT
+
+  return {
+    answerability: review.answerability,
+    query_quality: review.query_quality,
+    standalone_clarity: review.standalone_clarity,
+    note: review.note ?? '',
+    scientific_validity: review.scientific_validity,
+    top10_relevance: review.top10_relevance,
+    near_miss: review.near_miss,
+  }
+}
+
+function scoreLabel(v: number) {
+  return String(v)
+}
+
+function itemToCsvRow(item: ReviewItem, review: ReviewRow) {
+  const payload = item.payload ?? {}
+  const retrieved = Array.isArray(payload.retrieved)
+    ? payload.retrieved.map((r: RetrievedEntry) => `#${r.rank} ${String(r.doc_id ?? '')}: ${String(r.text ?? '').replace(/\s+/g, ' ').trim()}`).join(' || ')
+    : ''
+
+  return {
+    task_type: item.task_type,
+    subtask: item.subtask,
+    item_id: item.id,
+    order_index: item.order_index,
+    query: payload.query ?? payload.query_text ?? '',
+    passage: payload.passage ?? '',
+    gold_passage: payload.ground_truth_text ?? '',
+    top10: retrieved,
+    answerability: review.answerability,
+    query_quality: review.query_quality,
+    standalone_clarity: review.standalone_clarity,
+    scientific_validity: review.scientific_validity,
+    top10_relevance: review.top10_relevance,
+    near_miss: review.near_miss,
+    note: review.note ?? '',
+  }
+}
+
+function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (!rows.length) return
+  const headers = Object.keys(rows[0])
+  const esc = (v: unknown) => {
+    if (v === null || v === undefined) return ''
+    const s = String(v)
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const csv = [
+    headers.join(','),
+    ...rows.map((row) => headers.map((h) => esc(row[h])).join(',')),
+  ].join('\n')
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export default function ReviewPage() {
+  const router = useRouter()
+
+  const [authReady, setAuthReady] = useState(false)
+  const [user, setUser] = useState<User | null>(null)
+  const [canReview, setCanReview] = useState(false)
+
+  const [selectedBucket, setSelectedBucket] = useState<BucketKey>('chemrxiv')
+  const [items, setItems] = useState<ReviewItem[]>([])
+  const [reviewsByItem, setReviewsByItem] = useState<Record<string, ReviewRow>>({})
+  const [draft, setDraft] = useState<ReviewDraft>(EMPTY_DRAFT)
+  const [index, setIndex] = useState(0)
+  const [loadingBucket, setLoadingBucket] = useState(false)
+  const [progress, setProgress] = useState<ProgressMap>({
+    chemrxiv: { completed: 0, total: 0 },
+    dolma: { completed: 0, total: 0 },
+    successful: { completed: 0, total: 0 },
+    unsuccessful: { completed: 0, total: 0 },
+  })
+
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saveTick, setSaveTick] = useState(0)
+
+  const currentBucket = useMemo(
+    () => BUCKETS.find((b) => b.key === selectedBucket)!,
+    [selectedBucket]
+  )
+
+  const currentItem = items[index] ?? null
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null)
+      setAuthReady(true)
+    })
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+      setAuthReady(true)
+    })
+
+    return () => data.subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (!authReady) return
+    if (!user) {
+      router.replace('/login')
+      return
+    }
+
+    supabase
+      .from('profiles')
+      .select('can_review')
+      .eq('user_id', user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        setCanReview(Boolean(data?.can_review))
+      })
+  }, [authReady, user, router])
+
+  useEffect(() => {
+    if (!user) return
+
+    const fetchProgress = async () => {
+      const next: ProgressMap = {
+        chemrxiv: { completed: 0, total: 0 },
+        dolma: { completed: 0, total: 0 },
+        successful: { completed: 0, total: 0 },
+        unsuccessful: { completed: 0, total: 0 },
+      }
+
+      for (const b of BUCKETS) {
+        const { data: bucketItems, count } = await supabase
+          .from('review_items')
+          .select('id', { count: 'exact' })
+          .eq('task_type', b.task_type)
+          .eq('subtask', b.subtask)
+          .eq('active', true)
+
+        const ids = (bucketItems ?? []).map((r) => r.id as string)
+        let completed = 0
+        if (ids.length > 0) {
+          const { count: reviewCount } = await supabase
+            .from('reviews')
+            .select('item_id', { count: 'exact', head: true })
+            .eq('reviewer_id', user.id)
+            .in('item_id', ids)
+          completed = reviewCount ?? 0
+        }
+
+        next[b.key] = { total: count ?? 0, completed }
+      }
+
+      setProgress(next)
+    }
+
+    fetchProgress()
+  }, [user, saveTick])
+
+  useEffect(() => {
+    if (!user) return
+
+    const loadBucket = async () => {
+      setLoadingBucket(true)
+      setSaveError(null)
+
+      const { data: loadedItems, error: itemsError } = await supabase
+        .from('review_items')
+        .select('id, task_type, subtask, payload, order_index')
+        .eq('task_type', currentBucket.task_type)
+        .eq('subtask', currentBucket.subtask)
+        .eq('active', true)
+        .order('order_index', { ascending: true })
+
+      if (itemsError) {
+        setLoadingBucket(false)
+        setItems([])
+        setReviewsByItem({})
+        setIndex(0)
+        setDraft(EMPTY_DRAFT)
+        return
+      }
+
+      const rows = (loadedItems as ReviewItem[]) ?? []
+      setItems(rows)
+      setIndex(0)
+
+      if (!rows.length) {
+        setReviewsByItem({})
+        setDraft(EMPTY_DRAFT)
+        setLoadingBucket(false)
+        return
+      }
+
+      const itemIds = rows.map((r) => r.id)
+      const { data: loadedReviews } = await supabase
+        .from('reviews')
+        .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
+        .eq('reviewer_id', user.id)
+        .in('item_id', itemIds)
+
+      const byItem: Record<string, ReviewRow> = {}
+      for (const r of (loadedReviews ?? []) as ReviewRow[]) {
+        byItem[r.item_id] = r
+      }
+      setReviewsByItem(byItem)
+
+      const first = rows[0]
+      const firstReview = byItem[first.id]
+      setDraft(draftFromReview(firstReview))
+      setLoadingBucket(false)
+    }
+
+    loadBucket()
+  }, [user, currentBucket])
+
+  useEffect(() => {
+    if (!user || !canReview || !currentItem) return
+
+    const timer = setTimeout(async () => {
+      setSaveError(null)
+      const existing = reviewsByItem[currentItem.id]
+      const payload = {
+        answerability: draft.answerability,
+        query_quality: draft.query_quality,
+        standalone_clarity: draft.standalone_clarity,
+        note: draft.note || null,
+        scientific_validity: currentBucket.task_type === 'training' ? draft.scientific_validity : null,
+        top10_relevance: currentBucket.task_type === 'evaluation' ? draft.top10_relevance : null,
+        near_miss: currentBucket.task_type === 'evaluation' ? draft.near_miss : null,
+      }
+
+      if (existing) {
+        const { data, error } = await supabase
+          .from('reviews')
+          .update(payload)
+          .eq('id', existing.id)
+          .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
+          .single()
+
+        if (error) {
+          setSaveError(error.message)
+          return
+        }
+
+        setReviewsByItem((prev) => ({ ...prev, [currentItem.id]: data as ReviewRow }))
+        setSaveTick((v) => v + 1)
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('reviews')
+        .insert({
+          item_id: currentItem.id,
+          reviewer_id: user.id,
+          ...payload,
+        })
+        .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
+        .single()
+
+      if (error) {
+        setSaveError(error.message)
+        return
+      }
+
+      setReviewsByItem((prev) => ({ ...prev, [currentItem.id]: data as ReviewRow }))
+      setSaveTick((v) => v + 1)
+    }, 450)
+
+    return () => clearTimeout(timer)
+  }, [draft, user, canReview, currentItem, currentBucket.task_type])
+
+  async function signOut() {
+    await supabase.auth.signOut()
+    router.replace('/login')
+  }
+
+  function setDraftField<K extends keyof ReviewDraft>(key: K, value: ReviewDraft[K]) {
+    setDraft((prev) => ({ ...prev, [key]: value }))
+  }
+
+  function goToIndex(nextIndex: number) {
+    const nextItem = items[nextIndex]
+    if (!nextItem) return
+    setIndex(nextIndex)
+    setDraft(draftFromReview(reviewsByItem[nextItem.id]))
+  }
+
+  function onScaleChange(field: 'query_quality' | 'standalone_clarity' | 'scientific_validity' | 'top10_relevance') {
+    return (e: ChangeEvent<HTMLInputElement>) => {
+      setDraftField(field, Number(e.target.value))
+    }
+  }
+
+  async function onExportCsv() {
+    if (!user || !items.length) return
+    const rows = items
+      .map((item) => {
+        const review = reviewsByItem[item.id]
+        if (!review) return null
+        return itemToCsvRow(item, review)
+      })
+      .filter(Boolean) as Record<string, unknown>[]
+
+    downloadCsv(`${selectedBucket}-${user.id.slice(0, 8)}.csv`, rows)
+  }
+
+  if (!authReady || !user) {
+    return (
+      <main className="min-h-screen flex items-center justify-center text-sm text-neutral-600">
+        Loading session...
+      </main>
+    )
+  }
+
+  const payload = currentItem?.payload ?? {}
+  const isTraining = currentBucket.task_type === 'training'
+
   return (
     <main className="h-screen flex">
-      {/* Sidebar */}
-      <aside className="w-80 border-r p-4 space-y-4">
+      <aside className="w-80 border-r p-4 flex flex-col gap-6">
+        <div className="space-y-1">
+          <h1 className="text-lg font-semibold">ChEmbed Review</h1>
+          <p className="text-xs text-neutral-600 break-all">{user.email}</p>
+          <button className="text-xs underline" onClick={signOut}>Logout</button>
+        </div>
+
         <div>
           <div className="text-xs uppercase tracking-wide text-neutral-500">Training Data</div>
           <div className="mt-2 space-y-1 text-sm">
-            <button className="w-full text-left hover:underline">chemrxiv-train-cc-by_sample25</button>
-            <button className="w-full text-left hover:underline">dolma-chem-only-query-generated_sample25</button>
+            {BUCKETS.filter((b) => b.task_type === 'training').map((b) => (
+              <button
+                key={b.key}
+                onClick={() => setSelectedBucket(b.key)}
+                className={`w-full rounded px-2 py-1 text-left ${selectedBucket === b.key ? 'bg-neutral-900 text-white' : 'hover:bg-neutral-100'}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span>{b.title}</span>
+                  <span className="text-xs opacity-80">{progress[b.key].completed}/{progress[b.key].total}</span>
+                </div>
+              </button>
+            ))}
           </div>
         </div>
 
         <div>
           <div className="text-xs uppercase tracking-wide text-neutral-500">Evaluation Data</div>
           <div className="mt-2 space-y-1 text-sm">
-            <button className="w-full text-left hover:underline">Successful</button>
-            <button className="w-full text-left hover:underline">Unsuccessful</button>
+            {BUCKETS.filter((b) => b.task_type === 'evaluation').map((b) => (
+              <button
+                key={b.key}
+                onClick={() => setSelectedBucket(b.key)}
+                className={`w-full rounded px-2 py-1 text-left ${selectedBucket === b.key ? 'bg-neutral-900 text-white' : 'hover:bg-neutral-100'}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span>{b.title}</span>
+                  <span className="text-xs opacity-80">{progress[b.key].completed}/{progress[b.key].total}</span>
+                </div>
+              </button>
+            ))}
           </div>
         </div>
+
+        <button
+          onClick={onExportCsv}
+          className="mt-auto rounded border px-3 py-2 text-sm hover:bg-neutral-100"
+          disabled={!items.length}
+        >
+          Export current bucket CSV
+        </button>
       </aside>
 
-      {/* Main */}
-      <section className="flex-1 p-6">
-        <div className="text-sm text-neutral-600">
-          Stub page. Next step: load one item from Supabase and render:
-        </div>
-
-        <div className="mt-6 grid grid-cols-2 gap-6">
-          <div className="border rounded p-4">
-            <div className="text-xs uppercase tracking-wide text-neutral-500">Presented data</div>
-            <div className="mt-3 text-sm">Query + passage (or query + gold + top-10)</div>
+      <section className="flex-1 p-6 overflow-auto space-y-4">
+        {!canReview && (
+          <div className="rounded border border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Read-only: not authorized to submit reviews
           </div>
+        )}
 
-          <div className="border rounded p-4">
-            <div className="text-xs uppercase tracking-wide text-neutral-500">Expert feedback</div>
-            <div className="mt-3 text-sm">Answerability, 1–5 scales, note…</div>
-          </div>
-        </div>
+        {saveError && (
+          <div className="rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">Save failed: {saveError}</div>
+        )}
+
+        {loadingBucket ? (
+          <div className="text-sm text-neutral-600">Loading bucket...</div>
+        ) : !currentItem ? (
+          <div className="text-sm text-neutral-600">No items available for this bucket.</div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between text-sm">
+              <div>{currentBucket.title} • Item {index + 1} / {items.length}</div>
+              <div className="flex gap-2">
+                <button
+                  className="rounded border px-3 py-1 disabled:opacity-50"
+                  disabled={index === 0}
+                  onClick={() => goToIndex(Math.max(0, index - 1))}
+                >
+                  Previous
+                </button>
+                <button
+                  className="rounded border px-3 py-1 disabled:opacity-50"
+                  disabled={index >= items.length - 1}
+                  onClick={() => goToIndex(Math.min(items.length - 1, index + 1))}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="rounded border p-4 space-y-4">
+                <h2 className="text-xs uppercase tracking-wide text-neutral-500">Presented Data</h2>
+
+                <div>
+                  <div className="text-xs text-neutral-500">Query</div>
+                  <p className="mt-1 text-sm whitespace-pre-wrap">{payload.query ?? payload.query_text}</p>
+                </div>
+
+                {isTraining ? (
+                  <div>
+                    <div className="text-xs text-neutral-500">Passage</div>
+                    <p className="mt-1 text-sm whitespace-pre-wrap">{payload.passage}</p>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <div className="text-xs text-neutral-500">Gold Passage</div>
+                      <p className="mt-1 text-sm whitespace-pre-wrap">{payload.ground_truth_text}</p>
+                    </div>
+                    <div>
+                      <div className="text-xs text-neutral-500">Top-10 Retrieved</div>
+                      <ol className="mt-2 space-y-3 text-sm list-decimal pl-5">
+                        {(payload.retrieved ?? []).map((r: RetrievedEntry) => (
+                          <li key={String(r.rank) + String(r.doc_id)}>
+                            <p className="font-medium">Rank {r.rank} • {r.doc_id}</p>
+                            <p className="text-neutral-700 whitespace-pre-wrap">{r.text}</p>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="rounded border p-4 space-y-5">
+                <h2 className="text-xs uppercase tracking-wide text-neutral-500">Expert Feedback Form</h2>
+
+                <fieldset className="space-y-2" disabled={!canReview}>
+                  <div>
+                    <div className="text-sm font-medium">Answerability</div>
+                    <div className="mt-1 flex gap-4 text-sm">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={draft.answerability === true}
+                          onChange={() => setDraftField('answerability', true)}
+                        /> Yes
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={draft.answerability === false}
+                          onChange={() => setDraftField('answerability', false)}
+                        /> No
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-medium">Query quality (1-5)</div>
+                    <div className="mt-1 flex gap-3 text-sm">
+                      {[1, 2, 3, 4, 5].map((v) => (
+                        <label key={v} className="flex items-center gap-1">
+                          <input
+                            type="radio"
+                            value={v}
+                            checked={draft.query_quality === v}
+                            onChange={onScaleChange('query_quality')}
+                          />
+                          {scoreLabel(v)}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-medium">Standalone clarity (1-5)</div>
+                    <div className="mt-1 flex gap-3 text-sm">
+                      {[1, 2, 3, 4, 5].map((v) => (
+                        <label key={v} className="flex items-center gap-1">
+                          <input
+                            type="radio"
+                            value={v}
+                            checked={draft.standalone_clarity === v}
+                            onChange={onScaleChange('standalone_clarity')}
+                          />
+                          {scoreLabel(v)}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {isTraining ? (
+                    <div>
+                      <div className="text-sm font-medium">Scientific validity (1-5)</div>
+                      <div className="mt-1 flex gap-3 text-sm">
+                        {[1, 2, 3, 4, 5].map((v) => (
+                          <label key={v} className="flex items-center gap-1">
+                            <input
+                              type="radio"
+                              value={v}
+                              checked={draft.scientific_validity === v}
+                              onChange={onScaleChange('scientific_validity')}
+                            />
+                            {scoreLabel(v)}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <div className="text-sm font-medium">Top-10 relevance overall (1-5)</div>
+                        <div className="mt-1 flex gap-3 text-sm">
+                          {[1, 2, 3, 4, 5].map((v) => (
+                            <label key={v} className="flex items-center gap-1">
+                              <input
+                                type="radio"
+                                value={v}
+                                checked={draft.top10_relevance === v}
+                                onChange={onScaleChange('top10_relevance')}
+                              />
+                              {scoreLabel(v)}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-sm font-medium">Near-miss in top-10?</div>
+                        <div className="mt-1 flex gap-4 text-sm">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              checked={draft.near_miss === true}
+                              onChange={() => setDraftField('near_miss', true)}
+                            /> Yes
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              checked={draft.near_miss === false}
+                              onChange={() => setDraftField('near_miss', false)}
+                            /> No
+                          </label>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  <label className="block">
+                    <span className="text-sm font-medium">Short note (optional)</span>
+                    <textarea
+                      className="mt-1 w-full rounded border px-3 py-2 text-sm"
+                      rows={4}
+                      value={draft.note ?? ''}
+                      onChange={(e) => setDraftField('note', e.target.value)}
+                      placeholder="One sentence note"
+                    />
+                  </label>
+                </fieldset>
+              </div>
+            </div>
+          </>
+        )}
       </section>
     </main>
   )
