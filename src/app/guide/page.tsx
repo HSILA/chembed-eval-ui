@@ -1,3 +1,10 @@
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  title: 'Expert Review Guide',
+  description: 'Instructions and rubric for expert review of ChEmbed retrieval data',
+}
+
 export default function GuidePage() {
   return (
     <main className="min-h-screen bg-neutral-950 px-6 py-10 text-neutral-100">
@@ -14,13 +21,24 @@ export default function GuidePage() {
           <h2 className="text-lg font-semibold">1. Project overview</h2>
           <div className="space-y-3 text-sm leading-6 text-neutral-200">
             <p>
-              We are building evaluation data for a chemistry retrieval system. Retrieval systems learn to
-              connect a user query with the most relevant passage.
+              We are building a chemistry-specialized embedding model trained on chemistry literature and
+              article text.
             </p>
             <p>
-              Because large collections of real human chemistry queries are limited, synthetic queries were
-              generated from chemistry passages using language models. The purpose of this review is to judge
-              whether those generated queries are realistic and whether retrieval results are genuinely useful.
+              Embedding models are not generative models such as ChatGPT. They do not write answers or hold
+              a conversation. Instead, they help measure which pieces of text are semantically similar to each
+              other. You can think of them as part of the core matching system behind a search engine. Given a
+              user query and a collection of passages, the embedding model helps identify which passages are
+              most likely to match the query and contain the answer.
+            </p>
+            <p>
+              To train models like this, we need paired data such as query-passage or question-paragraph
+              examples. In the chemistry domain, this kind of data was not readily available at the scale we
+              needed. To build it, we first collected chemistry-related text from article sources such as
+              ChemRxiv and Semantic Scholar, then split those documents into paragraphs. We then used large
+              language models to generate synthetic queries for those paragraphs, with the goal of mimicking
+              realistic human search behavior, meaning what a user might type when looking for a passage whose
+              answer or information is contained in that paragraph.
             </p>
             <p>
               When reviewing, try to think like a knowledgeable human using a search engine to find the right
