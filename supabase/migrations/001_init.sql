@@ -1,11 +1,8 @@
 -- 001_init.sql
--- Minimal schema for chembed-eval-ui
--- Apply in Supabase SQL editor (or via supabase CLI if you use it).
+-- Fresh schema for chembed-eval-ui
 
--- Enable UUID generation
 create extension if not exists "pgcrypto";
 
--- review_items: stores the raw JSONL row in payload
 create table if not exists public.review_items (
   id uuid primary key default gen_random_uuid(),
   task_type text not null check (task_type in ('training','evaluation')),
@@ -17,70 +14,83 @@ create table if not exists public.review_items (
   created_at timestamptz not null default now()
 );
 
--- profiles: gate who can submit reviews (and future admin roles)
 create table if not exists public.profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   can_review boolean not null default false,
   created_at timestamptz not null default now()
 );
 
--- reviews: expert feedback
-create table if not exists public.reviews (
+create table if not exists public.training_reviews (
   id uuid primary key default gen_random_uuid(),
   item_id uuid not null references public.review_items(id) on delete cascade,
   reviewer_id uuid not null references auth.users(id) on delete cascade,
   created_at timestamptz not null default now(),
 
-  -- common
   answerability boolean,
+  specificity int,
   query_quality int,
   standalone_clarity int,
+  scientific_validity int,
   note text,
 
-  -- task A
-  scientific_validity int,
+  unique (item_id, reviewer_id)
+);
 
-  -- task B
+create table if not exists public.evaluation_reviews (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references public.review_items(id) on delete cascade,
+  reviewer_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+
+  answerability boolean,
+  specificity int,
+  query_quality int,
+  standalone_clarity int,
   top10_relevance int,
-  near_miss boolean
+  near_miss_ranks jsonb,
+  retrieved_relevance jsonb,
+  note text,
+
+  unique (item_id, reviewer_id)
 );
 
 create index if not exists idx_review_items_task_subtask on public.review_items(task_type, subtask);
-create index if not exists idx_reviews_item on public.reviews(item_id);
-create index if not exists idx_reviews_reviewer on public.reviews(reviewer_id);
+create index if not exists idx_training_reviews_item on public.training_reviews(item_id);
+create index if not exists idx_training_reviews_reviewer on public.training_reviews(reviewer_id);
+create index if not exists idx_evaluation_reviews_item on public.evaluation_reviews(item_id);
+create index if not exists idx_evaluation_reviews_reviewer on public.evaluation_reviews(reviewer_id);
 
--- RLS
 alter table public.review_items enable row level security;
 alter table public.profiles enable row level security;
-alter table public.reviews enable row level security;
+alter table public.training_reviews enable row level security;
+alter table public.evaluation_reviews enable row level security;
 
--- Policies (tight, safe defaults)
--- profiles
--- - Anyone logged in can see profiles (needed to show role badges later).
 create policy "profiles_select_authenticated"
 on public.profiles
 for select
 to authenticated
 using (true);
 
--- review_items: any authenticated user can read
 create policy "review_items_select_authenticated"
 on public.review_items
 for select
 to authenticated
 using (true);
 
--- reviews:
--- - Any authenticated user can READ all reviews ("public")
--- - Only users with profiles.can_review=true can WRITE reviews
-create policy "reviews_select_authenticated"
-on public.reviews
+create policy "training_reviews_select_authenticated"
+on public.training_reviews
 for select
 to authenticated
 using (true);
 
-create policy "reviews_insert_if_can_review"
-on public.reviews
+create policy "evaluation_reviews_select_authenticated"
+on public.evaluation_reviews
+for select
+to authenticated
+using (true);
+
+create policy "training_reviews_insert_if_can_review"
+on public.training_reviews
 for insert
 to authenticated
 with check (
@@ -91,8 +101,8 @@ with check (
   )
 );
 
-create policy "reviews_update_if_can_review"
-on public.reviews
+create policy "training_reviews_update_if_can_review"
+on public.training_reviews
 for update
 to authenticated
 using (
@@ -110,8 +120,51 @@ with check (
   )
 );
 
-create policy "reviews_delete_if_can_review"
-on public.reviews
+create policy "training_reviews_delete_if_can_review"
+on public.training_reviews
+for delete
+to authenticated
+using (
+  auth.uid() = reviewer_id
+  and exists (
+    select 1 from public.profiles p
+    where p.user_id = auth.uid() and p.can_review = true
+  )
+);
+
+create policy "evaluation_reviews_insert_if_can_review"
+on public.evaluation_reviews
+for insert
+to authenticated
+with check (
+  auth.uid() = reviewer_id
+  and exists (
+    select 1 from public.profiles p
+    where p.user_id = auth.uid() and p.can_review = true
+  )
+);
+
+create policy "evaluation_reviews_update_if_can_review"
+on public.evaluation_reviews
+for update
+to authenticated
+using (
+  auth.uid() = reviewer_id
+  and exists (
+    select 1 from public.profiles p
+    where p.user_id = auth.uid() and p.can_review = true
+  )
+)
+with check (
+  auth.uid() = reviewer_id
+  and exists (
+    select 1 from public.profiles p
+    where p.user_id = auth.uid() and p.can_review = true
+  )
+);
+
+create policy "evaluation_reviews_delete_if_can_review"
+on public.evaluation_reviews
 for delete
 to authenticated
 using (
