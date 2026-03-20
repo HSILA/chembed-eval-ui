@@ -42,7 +42,6 @@ type ReviewRow = {
   standalone_clarity: number | null
   note: string | null
   scientific_validity: number | null
-  top10_relevance: number | null
   near_miss_ranks: number[] | null
   retrieved_relevance: Record<string, number> | null
 }
@@ -72,7 +71,6 @@ const EMPTY_DRAFT: ReviewDraft = {
   standalone_clarity: null,
   note: '',
   scientific_validity: null,
-  top10_relevance: null,
   near_miss_ranks: null,
   retrieved_relevance: null,
 }
@@ -86,7 +84,7 @@ function trainingSelect() {
 }
 
 function evaluationSelect() {
-  return 'id, item_id, answerability, specificity, query_quality, standalone_clarity, top10_relevance, near_miss_ranks, retrieved_relevance, note'
+  return 'id, item_id, answerability, specificity, query_quality, standalone_clarity, scientific_validity, near_miss_ranks, retrieved_relevance, note'
 }
 
 function normalizeRanks(value: unknown): number[] | null {
@@ -127,7 +125,7 @@ function toSavePayload(draft: ReviewDraft, isTraining: boolean, existing?: Revie
     query_quality: draft.query_quality ?? existing?.query_quality ?? null,
     standalone_clarity: draft.standalone_clarity ?? existing?.standalone_clarity ?? null,
     note: note.length ? note : null,
-    top10_relevance: draft.top10_relevance ?? existing?.top10_relevance ?? null,
+    scientific_validity: draft.scientific_validity ?? existing?.scientific_validity ?? null,
     near_miss_ranks: nearMissRanks,
     retrieved_relevance: retrievedRelevance,
   }
@@ -144,7 +142,6 @@ function hasAnyDraftInput(draft: ReviewDraft) {
     draft.query_quality !== null ||
     draft.standalone_clarity !== null ||
     draft.scientific_validity !== null ||
-    draft.top10_relevance !== null ||
     (draft.near_miss_ranks?.length ?? 0) > 0 ||
     Object.keys(draft.retrieved_relevance ?? {}).length > 0 ||
     (draft.note ?? '').trim().length > 0
@@ -156,10 +153,11 @@ function isCompleteForTask(draft: ReviewDraft, isTraining: boolean, payload?: It
     draft.answerability !== null &&
     draft.specificity !== null &&
     draft.query_quality !== null &&
-    draft.standalone_clarity !== null
+    draft.standalone_clarity !== null &&
+    draft.scientific_validity !== null
 
   if (!commonReady) return false
-  if (isTraining) return draft.scientific_validity !== null
+  if (isTraining) return true
 
   const retrieved = Array.isArray(payload?.retrieved) ? payload!.retrieved : []
   const requiredRanks = retrieved
@@ -174,7 +172,7 @@ function isCompleteForTask(draft: ReviewDraft, isTraining: boolean, payload?: It
     return v === 1 || v === 2 || v === 3
   })
 
-  return draft.top10_relevance !== null && allRetrievedRated
+  return allRetrievedRated
 }
 
 function draftFromReview(review?: ReviewRow): ReviewDraft {
@@ -186,7 +184,6 @@ function draftFromReview(review?: ReviewRow): ReviewDraft {
     standalone_clarity: review.standalone_clarity,
     note: review.note ?? '',
     scientific_validity: review.scientific_validity,
-    top10_relevance: review.top10_relevance,
     near_miss_ranks: normalizeRanks(review.near_miss_ranks),
     retrieved_relevance: normalizeRetrievedRelevance(review.retrieved_relevance),
   }
@@ -220,13 +217,29 @@ function itemToCsvRow(item: ReviewItem, review: ReviewRow) {
     ? payload.retrieved.map((r: RetrievedEntry) => `#${r.rank} ${String(r.doc_id ?? '')}: ${sanitizeText(r.text).replace(/\s+/g, ' ').trim()}`).join(' || ')
     : ''
 
+  if (item.task_type === 'training') {
+    return {
+      task_type: item.task_type,
+      subtask: item.subtask,
+      item_id: item.id,
+      order_index: item.order_index,
+      query: sanitizeText(payload.query ?? payload.query_text),
+      passage: sanitizeText(payload.passage),
+      answerability: review.answerability,
+      specificity: review.specificity,
+      query_quality: review.query_quality,
+      standalone_clarity: review.standalone_clarity,
+      scientific_validity: review.scientific_validity,
+      note: review.note ?? '',
+    }
+  }
+
   return {
     task_type: item.task_type,
     subtask: item.subtask,
     item_id: item.id,
     order_index: item.order_index,
     query: sanitizeText(payload.query ?? payload.query_text),
-    passage: sanitizeText(payload.passage),
     gold_passage: sanitizeText(payload.ground_truth_text),
     top10: retrieved,
     answerability: review.answerability,
@@ -234,7 +247,6 @@ function itemToCsvRow(item: ReviewItem, review: ReviewRow) {
     query_quality: review.query_quality,
     standalone_clarity: review.standalone_clarity,
     scientific_validity: review.scientific_validity,
-    top10_relevance: review.top10_relevance,
     near_miss_ranks: review.near_miss_ranks ? JSON.stringify(review.near_miss_ranks) : '',
     retrieved_relevance: review.retrieved_relevance ? JSON.stringify(review.retrieved_relevance) : '',
     note: review.note ?? '',
@@ -460,7 +472,7 @@ export default function ReviewPage() {
     setDraft(draftFromReview(reviewsByItem[nextItem.id]))
   }
 
-  function onScaleChange(field: 'specificity' | 'query_quality' | 'standalone_clarity' | 'scientific_validity' | 'top10_relevance') {
+  function onScaleChange(field: 'specificity' | 'query_quality' | 'standalone_clarity' | 'scientific_validity') {
     return (e: ChangeEvent<HTMLInputElement>) => setDraftField(field, Number(e.target.value))
   }
 
@@ -647,8 +659,8 @@ export default function ReviewPage() {
                   ) : (
                     <>
                       <div>
-                        <div className="text-sm font-medium">Top-10 relevance overall (1-5)</div>
-                        <div className="mt-1 flex gap-3 text-sm">{[1,2,3,4,5].map((v) => <label key={v} className="cursor-pointer flex items-center gap-1"><input type="radio" value={v} checked={draft.top10_relevance === v} onChange={onScaleChange('top10_relevance')} />{scoreLabel(v)}</label>)}</div>
+                        <div className="text-sm font-medium">Scientific validity (1-5)</div>
+                        <div className="mt-1 flex gap-3 text-sm">{[1,2,3,4,5].map((v) => <label key={v} className="cursor-pointer flex items-center gap-1"><input type="radio" value={v} checked={draft.scientific_validity === v} onChange={onScaleChange('scientific_validity')} />{scoreLabel(v)}</label>)}</div>
                       </div>
                       <div>
                         <div className="text-sm font-medium">Near-miss ranks</div>

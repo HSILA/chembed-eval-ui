@@ -22,6 +22,8 @@ create table if not exists public.profiles (
 );
 
 alter table public.profiles add column if not exists email text;
+alter table public.evaluation_reviews add column if not exists scientific_validity int;
+alter table public.evaluation_reviews drop column if exists top10_relevance;
 
 create table if not exists public.training_reviews (
   id uuid primary key default gen_random_uuid(),
@@ -46,7 +48,7 @@ create table if not exists public.evaluation_reviews (
   specificity int,
   query_quality int,
   standalone_clarity int,
-  top10_relevance int,
+  scientific_validity int,
   near_miss_ranks jsonb,
   retrieved_relevance jsonb,
   note text,
