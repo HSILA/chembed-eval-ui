@@ -704,7 +704,9 @@ export default function ReviewPage() {
                                         type="radio"
                                         name={`retrieved-relevance-${rank}`}
                                         checked={relValue === value}
-                                        disabled={!canReview}
+                                        aria-disabled={!canReview}
+                                        tabIndex={canReview ? 0 : -1}
+                                        style={canReview ? undefined : { pointerEvents: 'none' }}
                                         onChange={() => setRetrievedRelevance(rank, Number(value))}
                                       />
                                       {label}
