@@ -34,7 +34,6 @@ type ReviewItem = {
 }
 
 type ReviewRow = {
-  id: string
   item_id: string
   answerability: boolean | null
   specificity: number | null
@@ -46,7 +45,7 @@ type ReviewRow = {
   retrieved_relevance: Record<string, number> | null
 }
 
-type ReviewDraft = Omit<ReviewRow, 'id' | 'item_id'>
+type ReviewDraft = Omit<ReviewRow, 'item_id'>
 
 type BucketConfig = {
   key: BucketKey
@@ -80,11 +79,11 @@ function reviewTableForTask(taskType: TaskType): ReviewTable {
 }
 
 function trainingSelect() {
-  return 'id, item_id, answerability, specificity, query_quality, standalone_clarity, scientific_validity, note'
+  return 'item_id, answerability, specificity, query_quality, standalone_clarity, scientific_validity, note'
 }
 
 function evaluationSelect() {
-  return 'id, item_id, answerability, specificity, query_quality, standalone_clarity, scientific_validity, near_miss_ranks, retrieved_relevance, note'
+  return 'item_id, answerability, specificity, query_quality, standalone_clarity, scientific_validity, near_miss_ranks, retrieved_relevance, note'
 }
 
 function normalizeRanks(value: unknown): number[] | null {
@@ -214,8 +213,12 @@ function isLikelyGoldMatch(goldTextRaw: unknown, retrievedTextRaw: unknown) {
 function itemToCsvRow(item: ReviewItem, review: ReviewRow) {
   const payload = item.payload ?? {}
   const retrieved = Array.isArray(payload.retrieved)
-    ? payload.retrieved.map((r: RetrievedEntry) => `#${r.rank} ${String(r.doc_id ?? '')}: ${sanitizeText(r.text).replace(/\s+/g, ' ').trim()}`).join(' || ')
-    : ''
+    ? payload.retrieved.map((r: RetrievedEntry, i: number) => ({
+        rank: Number(r.rank ?? i + 1),
+        doc_id: String(r.doc_id ?? ''),
+        text: sanitizeText(r.text).replace(/\s+/g, ' ').trim(),
+      }))
+    : []
 
   if (item.task_type === 'training') {
     return {
@@ -241,7 +244,7 @@ function itemToCsvRow(item: ReviewItem, review: ReviewRow) {
     order_index: item.order_index,
     query: sanitizeText(payload.query ?? payload.query_text),
     gold_passage: sanitizeText(payload.ground_truth_text),
-    top10: retrieved,
+    top10: JSON.stringify(retrieved),
     answerability: review.answerability,
     specificity: review.specificity,
     query_quality: review.query_quality,
@@ -414,7 +417,7 @@ export default function ReviewPage() {
       return
     }
     if (existing) {
-      const { data, error } = await supabase.from(currentTable).update(payload).eq('id', existing.id).select(currentSelect).single()
+      const { data, error } = await supabase.from(currentTable).update(payload).eq('item_id', currentItem.id).eq('reviewer_id', user.id).select(currentSelect).single()
       if (error) {
         setSaveError(error.message)
         setSaveStatus('idle')
