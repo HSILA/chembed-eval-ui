@@ -256,6 +256,41 @@ function itemToCsvRow(item: ReviewItem, review: ReviewRow) {
   }
 }
 
+function itemToJsonlRow(item: ReviewItem, review: ReviewRow) {
+  return {
+    item_id: item.id,
+    task_type: item.task_type,
+    subtask: item.subtask,
+    order_index: item.order_index,
+    payload: item.payload ?? {},
+    review: {
+      answerability: review.answerability,
+      specificity: review.specificity,
+      query_quality: review.query_quality,
+      standalone_clarity: review.standalone_clarity,
+      scientific_validity: review.scientific_validity,
+      near_miss_ranks: review.near_miss_ranks,
+      retrieved_relevance: review.retrieved_relevance,
+      note: review.note,
+    },
+  }
+}
+
+function downloadJsonl(filename: string, rows: unknown[]) {
+  if (!rows.length) return
+  const jsonl = rows.map((r) => JSON.stringify(r)).join('\n') + '\n'
+  const blob = new Blob([jsonl], { type: 'application/jsonl;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+// Kept for convenience (not the primary export format).
 function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
   if (!rows.length) return
   const headers = Object.keys(rows[0])
@@ -281,6 +316,7 @@ export default function ReviewPage() {
   const [authReady, setAuthReady] = useState(false)
   const [user, setUser] = useState<User | null>(null)
   const [canReview, setCanReview] = useState(false)
+  const [reviewerIdToView, setReviewerIdToView] = useState<string | null>(null)
   const [selectedBucket, setSelectedBucket] = useState<BucketKey>('chemrxiv')
   const [items, setItems] = useState<ReviewItem[]>([])
   const [reviewsByItem, setReviewsByItem] = useState<Record<string, ReviewRow>>({})
@@ -326,13 +362,34 @@ export default function ReviewPage() {
       router.replace('/login')
       return
     }
-    supabase.from('profiles').select('can_review').eq('user_id', user.id).maybeSingle().then(({ data }) => {
-      setCanReview(Boolean(data?.can_review))
-    })
+
+    const resolveRole = async () => {
+      const { data: profile } = await supabase.from('profiles').select('can_review').eq('user_id', user.id).maybeSingle()
+      const allowed = Boolean(profile?.can_review)
+      setCanReview(allowed)
+
+      if (allowed) {
+        setReviewerIdToView(user.id)
+        return
+      }
+
+      // Read-only users should still see the canonical reviewer’s saved labels.
+      // Assumption: exactly one reviewer exists.
+      const { data: reviewerProfile } = await supabase
+        .from('profiles')
+        .select('user_id')
+        .eq('can_review', true)
+        .limit(1)
+        .maybeSingle()
+
+      setReviewerIdToView(reviewerProfile?.user_id ?? null)
+    }
+
+    resolveRole()
   }, [authReady, user, router])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || !reviewerIdToView) return
     const fetchProgress = async () => {
       const next: ProgressMap = {
         chemrxiv: { completed: 0, total: 0 },
@@ -345,7 +402,11 @@ export default function ReviewPage() {
         const ids = (bucketItems ?? []).map((r) => r.id as string)
         let completed = 0
         if (ids.length > 0) {
-          const { count: reviewCount } = await supabase.from(reviewTableForTask(b.task_type)).select('item_id', { count: 'exact', head: true }).eq('reviewer_id', user.id).in('item_id', ids)
+          const { count: reviewCount } = await supabase
+            .from(reviewTableForTask(b.task_type))
+            .select('item_id', { count: 'exact', head: true })
+            .eq('reviewer_id', reviewerIdToView)
+            .in('item_id', ids)
           completed = reviewCount ?? 0
         }
         next[b.key] = { total: count ?? 0, completed }
@@ -353,10 +414,10 @@ export default function ReviewPage() {
       setProgress(next)
     }
     fetchProgress()
-  }, [user, saveTick])
+  }, [user, reviewerIdToView, saveTick])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || !reviewerIdToView) return
     const loadBucket = async () => {
       setLoadingBucket(true)
       setSaveError(null)
@@ -379,7 +440,7 @@ export default function ReviewPage() {
         return
       }
       const itemIds = rows.map((r) => r.id)
-      const { data: loadedReviews } = await supabase.from(currentTable).select(currentSelect).eq('reviewer_id', user.id).in('item_id', itemIds)
+      const { data: loadedReviews } = await supabase.from(currentTable).select(currentSelect).eq('reviewer_id', reviewerIdToView).in('item_id', itemIds)
       const byItem: Record<string, ReviewRow> = {}
       for (const r of ((loadedReviews ?? []) as unknown as ReviewRow[])) byItem[r.item_id] = r
       setReviewsByItem(byItem)
@@ -390,7 +451,7 @@ export default function ReviewPage() {
       setLoadingBucket(false)
     }
     loadBucket()
-  }, [user, currentBucket, currentSelect, currentTable])
+  }, [user, reviewerIdToView, currentBucket, currentSelect, currentTable])
 
   async function persistDraft() {
     if (!user || !canReview || !currentItem) return
@@ -464,7 +525,10 @@ export default function ReviewPage() {
     router.replace('/login')
   }
 
+  const isReadOnly = !canReview
+
   function setDraftField<K extends keyof ReviewDraft>(key: K, value: ReviewDraft[K]) {
+    if (isReadOnly) return
     setDraft((prev) => ({ ...prev, [key]: value }))
   }
 
@@ -476,10 +540,14 @@ export default function ReviewPage() {
   }
 
   function onScaleChange(field: 'specificity' | 'query_quality' | 'standalone_clarity' | 'scientific_validity') {
-    return (e: ChangeEvent<HTMLInputElement>) => setDraftField(field, Number(e.target.value))
+    return (e: ChangeEvent<HTMLInputElement>) => {
+      if (isReadOnly) return
+      setDraftField(field, Number(e.target.value))
+    }
   }
 
   function toggleNearMissRank(rank: number) {
+    if (isReadOnly) return
     setDraft((prev) => {
       const current = prev.near_miss_ranks ?? []
       const next = current.includes(rank) ? current.filter((r) => r !== rank) : [...current, rank].sort((a, b) => a - b)
@@ -488,6 +556,7 @@ export default function ReviewPage() {
   }
 
   function setRetrievedRelevance(rank: number, value: number) {
+    if (isReadOnly) return
     setDraft((prev) => ({
       ...prev,
       retrieved_relevance: {
@@ -498,25 +567,39 @@ export default function ReviewPage() {
   }
 
   async function exportForTask(taskType: TaskType) {
-    if (!user) return
+    if (!user || !reviewerIdToView) return
     const buckets = BUCKETS.filter((b) => b.task_type === taskType)
-    const rows: Record<string, unknown>[] = []
+    const rows: unknown[] = []
     for (const bucket of buckets) {
-      const { data: bucketItems } = await supabase.from('review_items').select('id, task_type, subtask, payload, order_index').eq('task_type', bucket.task_type).eq('subtask', bucket.subtask).eq('active', true).order('order_index', { ascending: true })
+      const { data: bucketItems } = await supabase
+        .from('review_items')
+        .select('id, task_type, subtask, payload, order_index')
+        .eq('task_type', bucket.task_type)
+        .eq('subtask', bucket.subtask)
+        .eq('active', true)
+        .order('order_index', { ascending: true })
+
       const itemsForBucket = (bucketItems as ReviewItem[] | null) ?? []
       if (!itemsForBucket.length) continue
+
       const itemIds = itemsForBucket.map((r) => r.id)
-      const { data: bucketReviews } = await supabase.from(reviewTableForTask(taskType)).select(taskType === 'training' ? trainingSelect() : evaluationSelect()).eq('reviewer_id', user.id).in('item_id', itemIds)
+      const { data: bucketReviews } = await supabase
+        .from(reviewTableForTask(taskType))
+        .select(taskType === 'training' ? trainingSelect() : evaluationSelect())
+        .eq('reviewer_id', reviewerIdToView)
+        .in('item_id', itemIds)
+
       const byItem = Object.fromEntries((((bucketReviews ?? []) as unknown as ReviewRow[])).map((r) => [r.item_id, r]))
       for (const item of itemsForBucket) {
         const review = byItem[item.id]
-        if (review) rows.push(itemToCsvRow(item, review))
+        if (review) rows.push(itemToJsonlRow(item, review))
       }
     }
-    if (rows.length) downloadCsv(`${taskType}-reviews-${user.id.slice(0, 8)}.csv`, rows)
+
+    if (rows.length) downloadJsonl(`${taskType}-reviews-${reviewerIdToView.slice(0, 8)}.jsonl`, rows)
   }
 
-  async function onExportAllCsv() {
+  async function onExportAllJsonl() {
     await exportForTask('training')
     await exportForTask('evaluation')
   }
@@ -554,8 +637,8 @@ export default function ReviewPage() {
             ))}
           </div>
         </div>
-        <button onClick={onExportAllCsv} className="cursor-pointer mt-auto rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white transition-colors hover:bg-neutral-800">
-          Export Task A + Task B CSVs
+        <button onClick={onExportAllJsonl} className="cursor-pointer mt-auto rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-white transition-colors hover:bg-neutral-800">
+          Export Task A + Task B JSONL
         </button>
       </aside>
 
@@ -612,8 +695,18 @@ export default function ReviewPage() {
                               {!isGold && (
                                 <div className="mt-2 flex flex-wrap gap-3 text-xs text-neutral-300">
                                   {[[1, 'Not relevant'], [2, 'Somewhat relevant'], [3, 'Relevant']].map(([value, label]) => (
-                                    <label key={`${rank}-${value}`} className="cursor-pointer flex items-center gap-1">
-                                      <input className="cursor-pointer" type="radio" name={`retrieved-relevance-${rank}`} checked={relValue === value} onChange={() => setRetrievedRelevance(rank, Number(value))} />
+                                    <label
+                                      key={`${rank}-${value}`}
+                                      className={`${canReview ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'} flex items-center gap-1`}
+                                    >
+                                      <input
+                                        className={canReview ? 'cursor-pointer' : 'cursor-not-allowed'}
+                                        type="radio"
+                                        name={`retrieved-relevance-${rank}`}
+                                        checked={relValue === value}
+                                        disabled={!canReview}
+                                        onChange={() => setRetrievedRelevance(rank, Number(value))}
+                                      />
                                       {label}
                                     </label>
                                   ))}
