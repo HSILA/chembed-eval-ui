@@ -26,7 +26,6 @@ alter table public.evaluation_reviews add column if not exists scientific_validi
 alter table public.evaluation_reviews drop column if exists top10_relevance;
 
 create table if not exists public.training_reviews (
-  id uuid primary key default gen_random_uuid(),
   item_id uuid not null references public.review_items(id) on delete cascade,
   reviewer_id uuid not null references auth.users(id) on delete cascade,
   created_at timestamptz not null default now(),
@@ -36,11 +35,10 @@ create table if not exists public.training_reviews (
   standalone_clarity int,
   scientific_validity int,
   note text,
-  unique (item_id, reviewer_id)
+  primary key (item_id, reviewer_id)
 );
 
 create table if not exists public.evaluation_reviews (
-  id uuid primary key default gen_random_uuid(),
   item_id uuid not null references public.review_items(id) on delete cascade,
   reviewer_id uuid not null references auth.users(id) on delete cascade,
   created_at timestamptz not null default now(),
@@ -52,7 +50,7 @@ create table if not exists public.evaluation_reviews (
   near_miss_ranks jsonb,
   retrieved_relevance jsonb,
   note text,
-  unique (item_id, reviewer_id)
+  primary key (item_id, reviewer_id)
 );
 
 create index if not exists idx_review_items_task_subtask on public.review_items(task_type, subtask);
