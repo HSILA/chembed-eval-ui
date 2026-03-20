@@ -693,44 +693,23 @@ export default function ReviewPage() {
                               <p className="text-neutral-200 whitespace-pre-wrap">{shownText}</p>
                               {needsToggle && <button type="button" className="cursor-pointer mt-1 text-xs underline text-blue-300" onClick={() => setExpandedRetrieved((prev) => ({ ...prev, [key]: !expanded }))}>{expanded ? 'Show less' : 'Read more'}</button>}
                               {!isGold && (
-                                <div className="mt-2 space-y-2">
-                                  {!canReview && (
-                                    <div className="text-xs text-neutral-200">
-                                      <span className="mr-2">Expert label:</span>
-                                      <span className="inline-flex items-center rounded-full border border-emerald-600 bg-emerald-950 px-2 py-0.5 font-medium text-emerald-200">
-                                        {relValue === 1 ? 'Not relevant' : relValue === 2 ? 'Somewhat relevant' : relValue === 3 ? 'Relevant' : '—'}
-                                      </span>
-                                    </div>
-                                  )}
-
-                                  {canReview ? (
-                                    <div className="flex flex-wrap gap-2 text-xs">
-                                      {[[1, 'Not relevant'], [2, 'Somewhat relevant'], [3, 'Relevant']].map(([value, label]) => (
-                                        <label
-                                          key={`${rank}-${value}`}
-                                          className={`flex items-center gap-2 rounded-full border px-2 py-1 ${relValue === value ? 'border-white bg-neutral-800 text-white' : 'border-neutral-700 bg-neutral-950 text-neutral-300'} cursor-pointer hover:bg-neutral-800`}
-                                        >
-                                          <input
-                                            className="cursor-pointer"
-                                            type="radio"
-                                            name={`retrieved-relevance-${rank}`}
-                                            checked={relValue === value}
-                                            style={{ accentColor: '#ffffff' }}
-                                            onChange={() => setRetrievedRelevance(rank, Number(value))}
-                                          />
-                                          {label}
-                                        </label>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <div className="text-xs text-neutral-200">
-                                      <span className={relValue === 1 ? 'font-semibold text-white' : 'text-neutral-400'}>Not relevant</span>
-                                      <span className="mx-2 text-neutral-600">|</span>
-                                      <span className={relValue === 2 ? 'font-semibold text-white' : 'text-neutral-400'}>Somewhat relevant</span>
-                                      <span className="mx-2 text-neutral-600">|</span>
-                                      <span className={relValue === 3 ? 'font-semibold text-white' : 'text-neutral-400'}>Relevant</span>
-                                    </div>
-                                  )}
+                                <div className="mt-2 flex flex-wrap gap-3 text-xs text-neutral-300">
+                                  {[[1, 'Not relevant'], [2, 'Somewhat relevant'], [3, 'Relevant']].map(([value, label]) => (
+                                    <label key={`${rank}-${value}`} className="flex items-center gap-1 cursor-pointer">
+                                      <input
+                                        className={canReview ? 'cursor-pointer' : 'cursor-default'}
+                                        type="radio"
+                                        name={`retrieved-relevance-${rank}`}
+                                        checked={relValue === value}
+                                        // Do NOT use `disabled` (it destroys visibility depending on OS/theme).
+                                        aria-disabled={!canReview}
+                                        tabIndex={canReview ? 0 : -1}
+                                        style={canReview ? { accentColor: '#3b82f6' } : { pointerEvents: 'none', accentColor: '#3b82f6' }}
+                                        onChange={() => setRetrievedRelevance(rank, Number(value))}
+                                      />
+                                      {label}
+                                    </label>
+                                  ))}
                                 </div>
                               )}
                             </li>
