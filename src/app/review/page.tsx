@@ -42,6 +42,7 @@ type ReviewRow = {
   scientific_validity: number | null
   top10_relevance: number | null
   near_miss: boolean | null
+  near_miss_ranks: number[] | null
 }
 
 type ReviewDraft = Omit<ReviewRow, 'id' | 'item_id'>
@@ -70,10 +71,17 @@ const EMPTY_DRAFT: ReviewDraft = {
   scientific_validity: null,
   top10_relevance: null,
   near_miss: null,
+  near_miss_ranks: null,
 }
 
 function toSavePayload(draft: ReviewDraft, isTraining: boolean, existing?: ReviewRow) {
   const note = (draft.note ?? '').trim()
+  const nearMissRanks = isTraining
+    ? null
+    : (draft.near_miss_ranks ?? existing?.near_miss_ranks ?? null)
+  const normalizedNearMissRanks = Array.isArray(nearMissRanks) && nearMissRanks.length > 0
+    ? [...nearMissRanks].sort((a, b) => a - b)
+    : null
 
   return {
     answerability: draft.answerability ?? existing?.answerability ?? null,
@@ -88,7 +96,8 @@ function toSavePayload(draft: ReviewDraft, isTraining: boolean, existing?: Revie
       : (draft.top10_relevance ?? existing?.top10_relevance ?? null),
     near_miss: isTraining
       ? null
-      : (draft.near_miss ?? existing?.near_miss ?? null),
+      : normalizedNearMissRanks !== null,
+    near_miss_ranks: normalizedNearMissRanks,
   }
 }
 
@@ -104,6 +113,7 @@ function hasAnyDraftInput(draft: ReviewDraft) {
     draft.scientific_validity !== null ||
     draft.top10_relevance !== null ||
     draft.near_miss !== null ||
+    (draft.near_miss_ranks?.length ?? 0) > 0 ||
     (draft.note ?? '').trim().length > 0
   )
 }
@@ -116,7 +126,7 @@ function isCompleteForTask(draft: ReviewDraft, isTraining: boolean) {
 
   if (!commonReady) return false
   if (isTraining) return draft.scientific_validity !== null
-  return draft.top10_relevance !== null && draft.near_miss !== null
+  return draft.top10_relevance !== null
 }
 
 function draftFromReview(review?: ReviewRow): ReviewDraft {
@@ -130,6 +140,9 @@ function draftFromReview(review?: ReviewRow): ReviewDraft {
     scientific_validity: review.scientific_validity,
     top10_relevance: review.top10_relevance,
     near_miss: review.near_miss,
+    near_miss_ranks: Array.isArray(review.near_miss_ranks)
+      ? review.near_miss_ranks.map((v) => Number(v)).filter((v) => Number.isInteger(v))
+      : null,
   }
 }
 
@@ -180,6 +193,7 @@ function itemToCsvRow(item: ReviewItem, review: ReviewRow) {
     scientific_validity: review.scientific_validity,
     top10_relevance: review.top10_relevance,
     near_miss: review.near_miss,
+    near_miss_ranks: review.near_miss_ranks,
     note: review.note ?? '',
   }
 }
@@ -353,7 +367,7 @@ export default function ReviewPage() {
       const itemIds = rows.map((r) => r.id)
       const { data: loadedReviews } = await supabase
         .from('reviews')
-        .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
+        .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss, near_miss_ranks')
         .eq('reviewer_id', user.id)
         .in('item_id', itemIds)
 
@@ -391,7 +405,7 @@ export default function ReviewPage() {
     if (!existing) {
       const { data: existingRow, error: existingError } = await supabase
         .from('reviews')
-        .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
+        .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss, near_miss_ranks')
         .eq('item_id', currentItem.id)
         .eq('reviewer_id', user.id)
         .maybeSingle()
@@ -424,7 +438,7 @@ export default function ReviewPage() {
         .from('reviews')
         .update(payload)
         .eq('id', existing.id)
-        .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
+        .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss, near_miss_ranks')
         .single()
 
       if (error) {
@@ -446,7 +460,7 @@ export default function ReviewPage() {
         reviewer_id: user.id,
         ...payload,
       })
-      .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss')
+      .select('id, item_id, answerability, query_quality, standalone_clarity, note, scientific_validity, top10_relevance, near_miss, near_miss_ranks')
       .single()
 
     if (error) {
@@ -519,6 +533,21 @@ export default function ReviewPage() {
     }
   }
 
+  function toggleNearMissRank(rank: number) {
+    setDraft((prev) => {
+      const current = prev.near_miss_ranks ?? []
+      const next = current.includes(rank)
+        ? current.filter((r) => r !== rank)
+        : [...current, rank].sort((a, b) => a - b)
+
+      return {
+        ...prev,
+        near_miss_ranks: next.length > 0 ? next : null,
+        near_miss: next.length > 0 ? true : false,
+      }
+    })
+  }
+
   async function onExportCsv() {
     if (!user || !items.length) return
     const rows = items
@@ -553,7 +582,7 @@ export default function ReviewPage() {
         </div>
 
         <div>
-          <div className="text-xs uppercase tracking-wide text-neutral-400">Training Data</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-400">Training Data (Task A)</div>
           <div className="mt-2 space-y-1 text-sm">
             {BUCKETS.filter((b) => b.task_type === 'training').map((b) => (
               <button
@@ -571,7 +600,7 @@ export default function ReviewPage() {
         </div>
 
         <div>
-          <div className="text-xs uppercase tracking-wide text-neutral-400">Evaluation Data</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-400">Evaluation Data (Task B)</div>
           <div className="mt-2 space-y-1 text-sm">
             {BUCKETS.filter((b) => b.task_type === 'evaluation').map((b) => (
               <button
@@ -812,22 +841,31 @@ export default function ReviewPage() {
                       </div>
 
                       <div>
-                        <div className="text-sm font-medium">Near-miss in top-10?</div>
-                        <div className="mt-1 flex gap-4 text-sm">
-                          <label className="cursor-pointer flex items-center gap-2">
-                            <input
-                              type="radio"
-                              checked={draft.near_miss === true}
-                              onChange={() => setDraftField('near_miss', true)}
-                            /> Yes
-                          </label>
-                          <label className="cursor-pointer flex items-center gap-2">
-                            <input
-                              type="radio"
-                              checked={draft.near_miss === false}
-                              onChange={() => setDraftField('near_miss', false)}
-                            /> No
-                          </label>
+                        <div className="text-sm font-medium">Near-miss ranks</div>
+                        <p className="mt-1 text-xs text-neutral-400">
+                          Check any retrieved ranks that are near-misses. Leave all unchecked if none apply.
+                        </p>
+                        <div className="mt-3 grid grid-cols-5 gap-2 text-sm">
+                          {(payload.retrieved ?? []).slice(0, 10).map((r: RetrievedEntry, i: number) => {
+                            const rank = Number(r.rank ?? i + 1)
+                            const isGold = isLikelyGoldMatch(payload.ground_truth_text, r.text)
+                            const checked = draft.near_miss_ranks?.includes(rank) ?? false
+
+                            return (
+                              <label
+                                key={`near-miss-${rank}`}
+                                className={`flex items-center gap-2 rounded border px-2 py-2 ${isGold ? 'cursor-not-allowed border-emerald-800 bg-emerald-950/40 text-emerald-300 opacity-70' : 'cursor-pointer border-neutral-700 bg-neutral-900 text-neutral-100 hover:bg-neutral-800'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={isGold}
+                                  onChange={() => toggleNearMissRank(rank)}
+                                />
+                                <span>Rank {rank}</span>
+                              </label>
+                            )
+                          })}
                         </div>
                       </div>
                     </>
