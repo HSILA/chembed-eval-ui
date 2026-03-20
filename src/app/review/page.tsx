@@ -697,7 +697,7 @@ export default function ReviewPage() {
                                   {[[1, 'Not relevant'], [2, 'Somewhat relevant'], [3, 'Relevant']].map(([value, label]) => (
                                     <label
                                       key={`${rank}-${value}`}
-                                      className={`${canReview ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'} flex items-center gap-1`}
+                                      className={`${canReview ? 'cursor-pointer' : 'cursor-not-allowed'} flex items-center gap-1`}
                                     >
                                       <input
                                         className={canReview ? 'cursor-pointer' : 'cursor-not-allowed'}
