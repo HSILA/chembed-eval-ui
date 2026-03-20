@@ -1,4 +1,4 @@
--- Automatically create a public.profiles row whenever a new auth user is created.
+-- Automatically create or update a public.profiles row whenever a new auth user is created.
 
 create or replace function public.handle_new_user_profile()
 returns trigger
@@ -7,9 +7,10 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (user_id)
-  values (new.id)
-  on conflict (user_id) do nothing;
+  insert into public.profiles (user_id, email)
+  values (new.id, new.email)
+  on conflict (user_id) do update
+    set email = excluded.email;
 
   return new;
 end;

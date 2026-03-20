@@ -16,9 +16,12 @@ create table if not exists public.review_items (
 
 create table if not exists public.profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
+  email text,
   can_review boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+alter table public.profiles add column if not exists email text;
 
 create table if not exists public.training_reviews (
   id uuid primary key default gen_random_uuid(),
