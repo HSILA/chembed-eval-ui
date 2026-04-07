@@ -639,6 +639,7 @@ export default function ReviewPage() {
             <div className="flex items-center justify-between text-sm">
               <div>{currentBucket.title} • Item {index + 1} / {items.length}</div>
               <div className="flex gap-2">
+                <Link href="/dashboard" className="cursor-pointer rounded border border-sky-700 bg-sky-700 px-3 py-1 text-white transition-colors hover:bg-sky-600">Dashboard</Link>
                 <Link href="/guide" target="_blank" className="cursor-pointer rounded border border-emerald-700 bg-emerald-700 px-3 py-1 text-white transition-colors hover:bg-emerald-600">Guide</Link>
                 <button className="cursor-pointer rounded border border-neutral-700 bg-neutral-900 px-3 py-1 text-white transition-colors hover:bg-neutral-800 disabled:opacity-50" disabled={index === 0} onClick={() => goToIndex(Math.max(0, index - 1))}>Previous</button>
                 <button className="cursor-pointer rounded border border-neutral-700 bg-neutral-900 px-3 py-1 text-white transition-colors hover:bg-neutral-800 disabled:opacity-50" disabled={index >= items.length - 1} onClick={() => goToIndex(Math.min(items.length - 1, index + 1))}>Next</button>
