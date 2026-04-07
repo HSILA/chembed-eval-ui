@@ -316,7 +316,6 @@ export default function ReviewPage() {
   const [authReady, setAuthReady] = useState(false)
   const [user, setUser] = useState<User | null>(null)
   const [canReview, setCanReview] = useState(false)
-  const [reviewerIdToView, setReviewerIdToView] = useState<string | null>(null)
   const [selectedBucket, setSelectedBucket] = useState<BucketKey>('chemrxiv')
   const [items, setItems] = useState<ReviewItem[]>([])
   const [reviewsByItem, setReviewsByItem] = useState<Record<string, ReviewRow>>({})
@@ -367,29 +366,13 @@ export default function ReviewPage() {
       const { data: profile } = await supabase.from('profiles').select('can_review').eq('user_id', user.id).maybeSingle()
       const allowed = Boolean(profile?.can_review)
       setCanReview(allowed)
-
-      if (allowed) {
-        setReviewerIdToView(user.id)
-        return
-      }
-
-      // Read-only users should still see the canonical reviewer’s saved labels.
-      // Assumption: exactly one reviewer exists.
-      const { data: reviewerProfile } = await supabase
-        .from('profiles')
-        .select('user_id')
-        .eq('can_review', true)
-        .limit(1)
-        .maybeSingle()
-
-      setReviewerIdToView(reviewerProfile?.user_id ?? null)
     }
 
     resolveRole()
   }, [authReady, user, router])
 
   useEffect(() => {
-    if (!user || !reviewerIdToView) return
+    if (!user) return
     const fetchProgress = async () => {
       const next: ProgressMap = {
         chemrxiv: { completed: 0, total: 0 },
@@ -405,7 +388,6 @@ export default function ReviewPage() {
           const { count: reviewCount } = await supabase
             .from(reviewTableForTask(b.task_type))
             .select('item_id', { count: 'exact', head: true })
-            .eq('reviewer_id', reviewerIdToView)
             .in('item_id', ids)
           completed = reviewCount ?? 0
         }
@@ -414,10 +396,10 @@ export default function ReviewPage() {
       setProgress(next)
     }
     fetchProgress()
-  }, [user, reviewerIdToView, saveTick])
+  }, [user, saveTick])
 
   useEffect(() => {
-    if (!user || !reviewerIdToView) return
+    if (!user) return
     const loadBucket = async () => {
       setLoadingBucket(true)
       setSaveError(null)
@@ -440,18 +422,21 @@ export default function ReviewPage() {
         return
       }
       const itemIds = rows.map((r) => r.id)
-      const { data: loadedReviews } = await supabase.from(currentTable).select(currentSelect).eq('reviewer_id', reviewerIdToView).in('item_id', itemIds)
+      const { data: loadedReviews } = await supabase.from(currentTable).select(currentSelect).in('item_id', itemIds)
       const byItem: Record<string, ReviewRow> = {}
       for (const r of ((loadedReviews ?? []) as unknown as ReviewRow[])) byItem[r.item_id] = r
       setReviewsByItem(byItem)
       const firstIncompleteIndex = rows.findIndex((item) => !isCompleteForTask(draftFromReview(byItem[item.id]), item.task_type === 'training', item.payload))
-      const initialIndex = firstIncompleteIndex >= 0 ? firstIncompleteIndex : 0
+      const firstReviewedIndex = rows.findIndex((item) => Boolean(byItem[item.id]))
+      const initialIndex = canReview
+        ? (firstIncompleteIndex >= 0 ? firstIncompleteIndex : 0)
+        : (firstReviewedIndex >= 0 ? firstReviewedIndex : 0)
       setIndex(initialIndex)
       setDraft(draftFromReview(byItem[rows[initialIndex].id]))
       setLoadingBucket(false)
     }
     loadBucket()
-  }, [user, reviewerIdToView, currentBucket, currentSelect, currentTable])
+  }, [user, canReview, currentBucket, currentSelect, currentTable])
 
   async function persistDraft() {
     if (!user || !canReview || !currentItem) return
@@ -567,7 +552,7 @@ export default function ReviewPage() {
   }
 
   async function exportForTask(taskType: TaskType) {
-    if (!user || !reviewerIdToView) return
+    if (!user) return
     const buckets = BUCKETS.filter((b) => b.task_type === taskType)
     const rows: unknown[] = []
     for (const bucket of buckets) {
@@ -586,7 +571,6 @@ export default function ReviewPage() {
       const { data: bucketReviews } = await supabase
         .from(reviewTableForTask(taskType))
         .select(taskType === 'training' ? trainingSelect() : evaluationSelect())
-        .eq('reviewer_id', reviewerIdToView)
         .in('item_id', itemIds)
 
       const byItem = Object.fromEntries((((bucketReviews ?? []) as unknown as ReviewRow[])).map((r) => [r.item_id, r]))
@@ -596,7 +580,7 @@ export default function ReviewPage() {
       }
     }
 
-    if (rows.length) downloadJsonl(`${taskType}-reviews-${reviewerIdToView.slice(0, 8)}.jsonl`, rows)
+    if (rows.length) downloadJsonl(`${taskType}-reviews.jsonl`, rows)
   }
 
   async function onExportAllJsonl() {
