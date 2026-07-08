@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -17,6 +18,18 @@ export const metadata: Metadata = {
   description: "Expert review interface for ChEmbed retrieval data",
 };
 
+const themeInitScript = `
+(function () {
+  try {
+    var saved = window.localStorage.getItem('chembed-review-theme');
+    var theme = saved === 'light' || saved === 'dark' ? saved : 'dark';
+    document.documentElement.classList.toggle('theme-light', theme === 'light');
+    document.documentElement.classList.toggle('theme-dark', theme === 'dark');
+    document.documentElement.style.colorScheme = theme;
+  } catch (_) {}
+})();
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -27,7 +40,13 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body className="min-h-full flex flex-col">
+        <ThemeToggle />
+        {children}
+      </body>
     </html>
   );
 }

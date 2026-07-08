@@ -12,15 +12,95 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html.theme-dark,
+:root {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+html.theme-light {
+  --background: #f8fafc;
+  --foreground: #171717;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+html.theme-light .bg-neutral-950 {
+  background-color: #f8fafc !important;
+}
+
+html.theme-light .bg-neutral-900,
+html.theme-light .bg-neutral-900\/60,
+html.theme-light .bg-neutral-950\/40 {
+  background-color: #ffffff !important;
+}
+
+html.theme-light .bg-neutral-800 {
+  background-color: #e5e7eb !important;
+}
+
+html.theme-light .hover\:bg-neutral-800:hover,
+html.theme-light .hover\:bg-neutral-700:hover {
+  background-color: #e5e7eb !important;
+}
+
+html.theme-light .border-neutral-800,
+html.theme-light .border-neutral-700 {
+  border-color: #d4d4d8 !important;
+}
+
+html.theme-light .text-neutral-100,
+html.theme-light .text-neutral-200,
+html.theme-light .text-white {
+  color: #171717 !important;
+}
+
+html.theme-light .text-neutral-300,
+html.theme-light .text-neutral-400,
+html.theme-light .text-neutral-500,
+html.theme-light .text-neutral-600 {
+  color: #52525b !important;
+}
+
+html.theme-light .text-blue-300 {
+  color: #2563eb !important;
+}
+
+html.theme-light .text-emerald-400,
+html.theme-light .text-emerald-300,
+html.theme-light .text-emerald-200 {
+  color: #047857 !important;
+}
+
+html.theme-light .text-amber-300 {
+  color: #b45309 !important;
+}
+
+html.theme-light .bg-emerald-950\/40,
+html.theme-light .bg-emerald-900\/60 {
+  background-color: #ecfdf5 !important;
+}
+
+html.theme-light .border-emerald-800,
+html.theme-light .border-emerald-700 {
+  border-color: #6ee7b7 !important;
+}
+
+html.theme-light .bg-amber-900\/60 {
+  background-color: #fffbeb !important;
+}
+
+html.theme-light .border-amber-700 {
+  border-color: #f59e0b !important;
+}
+
+html.theme-light textarea,
+html.theme-light input,
+html.theme-light select {
+  background-color: #ffffff;
+  color: #171717;
 }
