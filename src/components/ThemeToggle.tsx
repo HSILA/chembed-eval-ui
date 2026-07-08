@@ -34,11 +34,11 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={toggleTheme}
-      className="fixed right-4 top-4 z-50 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-neutral-100 shadow-lg transition-colors hover:bg-neutral-800"
+      className="cursor-pointer rounded border border-neutral-700 bg-neutral-900 px-3 py-1 text-sm text-neutral-100 shadow-sm transition-colors hover:bg-neutral-800"
       aria-label="Toggle light and dark theme"
       title="Toggle light/dark theme"
     >
-      Light/Dark
+      ☀️ / 🌙
     </button>
   )
 }
