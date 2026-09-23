@@ -1,6 +1,8 @@
-# chembed-eval-ui
+# ChEmbed Expert Review Interface
 
-Expert review UI for ChEmbed training and evaluation datasets.
+Web application for structured expert assessment of ChEmbed's synthetic chemistry queries and retrieval results.
+
+![ChEmbed expert review interface](public/expert-review-interface.png)
 
 ## Quickstart
 
